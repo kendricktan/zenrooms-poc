@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">    
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ZenRooms - a PoC</title>
+
+    <link rel="stylesheet" href="node_modules/bootstrap/dist/css/bootstrap.min.css"  type="text/css">   
+  </head>
+  <body>      
+      <div class="container" style="padding-top: 25px;">
+          <div class="row">
+            <!-- Current room -->
+            <div class="form-group row">
+              <label for="roomSelect" class="col-sm-2 col-form-label">Select Room</label>
+              <div class="col-sm-10">
+                <select class="form-control" id="roomSelect">
+                  <option>Loading...</option>
+                </select>
+              </div>
+            </div>
+            
+            <div class="form-group row">              
+              <div class="col-sm-8">
+                <input type="password" class="form-control" id="inputRoomPrivateKey" placeholder="Room Private Key">                
+              </div>
+              <div class="col-sm-4">
+                <button type="submit" class="btn btn-block btn-primary" onclick="addZAddress()">Add Room (takes a while)</button>
+              </div>
+            </div>
+          </div>          
+          <hr/>
+
+          <!-- Chat history -->          
+          <div style="display: inline-flex; height: 100%; width: 100%">
+            <textarea readonly class="content" id="chatroomContent" style="width: 100%; min-height: 280px; overflow-y: auto;">              
+            </textarea>            
+          </div>
+          <div class="row"><br/><button type="submit" class="btn btn-block btn-primary" onclick="updateChatbox()">Resync chat</button></div>   
+
+          <hr/>
+          <!-- Send as -->
+          <div class="row">            
+            <div class="form-group row">
+              <label for="sendSelect" class="col-sm-2 col-form-label">Send as</label>
+              <div class="col-sm-10">
+                <select class="form-control" id="sendSelect">
+                  <option>loading</option>                             
+                </select>
+              </div>
+            </div>
+            
+            <div class="form-group row">              
+              <div class="col-sm-9">
+                <input type="text" class="form-control" id="inputMessage" maxlength="512" placeholder="Message. WARNING: THIS WILL USE 0.00000001 Zen">
+              </div>
+              <div class="col-sm-3">
+                <button class="btn btn-block btn-primary" id="sendMsgButton" onclick="sendTx()">Send</button>
+              </div>              
+            </div>
+          </div>
+      </div>
+      
+      <script>window.$ = window.jQuery = require('jquery');</script>      
+      <script src="node_modules/bootstrap/dist/js/bootstrap.min.js"></script>
+      <script>
+        // Kek lmao since using globals might as well go all out
+        // I feel so dirty jesuss
+
+        // Its just json rpc calls
+        var zencash = require('bitcoin')
+
+        // RPC stuff
+        var rpcUser, rpcPassword, rpcHost, rpcPort, rpcClient
+
+        // Selected z_address (room) and t_address (sender)
+        var selectedZAddress, selectedTAddress
+
+        // Textarea
+        var textArea = $('#chatroomContent')
+
+        // Some periodic calls (ugh)
+        var handleSendStatus
+
+        // Read config file
+        const fs = require("fs");
+
+        // Asynchronous read config.json
+        // Read config.json on load
+        fs.readFile('config.json', function (err, data) {
+          if (err) {
+            alert(err);
+            return;
+          }
+          var fileContents = JSON.parse(data.toString())
+          rpcUser = fileContents['rpcuser']
+          rpcPassword = fileContents['rpcpassword']
+          rpcHost = fileContents['rpchost']
+          rpcPort = fileContents['rpcport']
+          rpcClient = new zencash.Client({
+            host: rpcHost,
+            port: rpcPort,
+            user: rpcUser,
+            pass: rpcPassword,
+            timeout: 30000
+          })
+          initSelections();   
+        });
+
+        // Update everything
+        setInterval(updateChatbox(), 30) // Updates every 30 seconds
+
+        // Populate the select boxes
+        function initSelections(){
+          // Z address          
+          rpcClient.cmd('z_listaddresses', function(err, z_addresses, headers){
+            if (err){
+              alert('Seems like your zend is not working. Check your config files (both zen.conf and config.json)')
+              return;
+            }
+
+            // Reset room select
+            var htmlstr = '<option>Please select a room</option>';
+            $('#roomSelect').html('');
+
+            z_addresses.map(x => htmlstr += '<option value=' + x + '>' + x + '</option>')
+
+            // Set select
+            $('#roomSelect').html(htmlstr);
+          })
+
+          // T address
+          rpcClient.cmd('listunspent', function(err, t_addresses_with_monies, headers){
+            if (err){
+              alert('Seems like your zend is not working. Check your config files (both zen.conf and config.json)')
+              return;
+            }
+
+            // Reset address select string
+            var htmlstr = '<option>Please select a sender</option>'
+            var addrAmount = {} // JSON object
+
+            t_addresses_with_monies.map(function(x){
+              var c = addrAmount[x['address']]
+              addrAmount[x['address']] = (c === undefined ? 0.0 : c + x['amount'])
+            })
+
+            Object.keys(addrAmount).map(function(k){
+              htmlstr += '<option value=' + k + '>[' + addrAmount[k] + '] - ' + k + '</option>'
+            })
+
+            // Set t address
+            $('#sendSelect').html(htmlstr);
+          })
+        }
+
+        function addZAddress(){
+          var pk = $('#inputRoomPrivateKey').val();
+
+          if (pk === ''){
+            alert('room private key cannot be empty');
+            return;
+          }
+          
+          rpcClient.cmd('z_importkey', pk, function(err, resp, headers){
+            if(err){
+              alert(err)
+            }
+            alert('zend needs to rescan the blockchain, this WILL take a while ~10mins depending on your computer. Go have a cup of tea or something.')
+          })
+
+          initSelections();
+        }
+
+        function checkSendTxStatus(opid){
+          rpcClient.cmd('z_getoperationstatus', [opid], function(err, resp, headers){
+            if(err){
+              alert(err);
+              return;
+            }
+
+            resp = resp[0]
+            console.log(resp)
+
+            if(resp.status === 'success'){
+              $('#sendMsgButton').prop('disabled', false);
+              $('#sendMsgButton').html('Send')
+              alert('Message successfully sent!')
+              clearInterval(handleSendStatus)
+              return;
+            }
+            else if (resp.status === 'failed'){
+              $('#sendMsgButton').prop('disabled', false);
+              $('#sendMsgButton').html('Send')
+              alert('Sending failed. You probably tried to send too many messages in a short amount of time. Try again in 5 minutes')
+              clearInterval(handleSendStatus)              
+              return;
+            }
+
+            $('#sendMsgButton').html('Sending... Status: ' + resp.status)            
+          });
+        }
+
+        function sendTx(){
+          var memo = $('#inputMessage').val()
+          var memoHex = Buffer.from(memo).toString('hex')
+
+          if (selectedTAddress === undefined){
+            alert('Please select a sender')
+            return;
+          }
+
+          if (selectedZAddress === undefined){
+            alert('Please select a chatroom')
+            return;
+          }
+
+          rpcClient.cmd('z_sendmany', selectedTAddress, [{amount: 0.00000001, address: selectedZAddress, memo: memoHex}], 1, 0, function(err, opid, headers){
+            if(err){
+              alert(err);
+              return;
+            }            
+            $('#sendMsgButton').prop('disabled', true);            
+            handleSendStatus = setInterval(() => checkSendTxStatus(opid), 3000) // check every 3 seconds
+            alert('Private message sent. This WILL take a while (~2mins). opid: ' + opid)
+          });
+        }
+
+        // https://gist.github.com/willsoto/5895425
+        function hexToASCII (hex) {
+          return hex.replace(/.{1,2}/g, (temp) => String.fromCharCode(parseInt(temp, 16))).replace(/\W+/g, ''); 
+        }
+
+        // Events
+        $('#roomSelect').on('change', function(){
+          selectedZAddress = this.value
+          updateChatbox()
+        })
+
+        $('#sendSelect').on('change', function(){
+          selectedTAddress = this.value          
+        })
+
+        function updateChatbox(){
+          if (rpcClient === undefined){
+            return;
+          }
+
+          if (selectedZAddress === undefined){
+            return;
+          }
+
+          // Populate chat box
+          rpcClient.cmd('z_listreceivedbyaddress', selectedZAddress, function(err, tx, headers){
+            if(err){
+              alert(err);
+            }
+
+            textArea.val('')
+            var textareastr = ''
+
+            tx.map(function(x){
+              var memo = hexToASCII(x['memo'])
+              var txid = x['txid']
+              var textareastrCur = txid + ':\n'
+              textareastrCur += memo === '' ? '[Empty]' : memo
+              textareastrCur += '\n\n'
+              textareastr = textareastrCur + textareastr
+            })
+
+            // Set value
+            // Scroll to bottom
+            textareastr = textareastr === '' ? 'Chatroom is empty' : textareastr
+            textArea.val(textareastr);
+            textArea.scrollTop(textArea[0].scrollHeight);
+          })
+        }
+      </script>
+  </body>
+</html>

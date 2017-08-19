@@ -1,0 +1,6 @@
+{
+  "rpcuser": "USERNAME",
+  "rpcpassword": "PASSWORD",
+  "rpchost": "localhost",
+  "rpcport": "8232"
+}

@@ -1,5 +1,8 @@
 # zenrooms
 PoC private and anonymous chatrooms using the zencash blockchain
+
+![screenshot](https://i.imgur.com/fvMuKQS.png)
+
 # ZenRooms
 
 This is just a prove of concept, building a secure chatroom application on top of zencash's blockchain.
